@@ -1,0 +1,12 @@
+.DS_Store
+fp-info-cache
+/gerbers
+/assembly
+/datasheets
+*.kicad_pcb
+*.zip
+*.kicad_pcb-bak
+*.gbr
+*.gbrjob
+*.drl
+*.dxf
