@@ -118,7 +118,7 @@
         "min_hole_to_hole": 0.25,
         "min_microvia_diameter": 0.19999999999999998,
         "min_microvia_drill": 0.09999999999999999,
-        "min_resolved_spokes": 2,
+        "min_resolved_spokes": 1,
         "min_silk_clearance": 0.0,
         "min_text_height": 0.7999999999999999,
         "min_text_thickness": 0.08,
@@ -172,7 +172,9 @@
         }
       ],
       "track_widths": [
-        0.0
+        0.0,
+        0.5,
+        1.0
       ],
       "via_dimensions": [
         {
@@ -487,7 +489,7 @@
     ],
     [
       "3c8a8543-4edb-49ef-8c7d-8cbc9ff2ab74",
-      "NEEDLE SELECTORS"
+      "SOLENOIDS"
     ],
     [
       "3d4bd457-54d1-418e-ba35-4d3e64bbc924",
