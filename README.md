@@ -1,5 +1,6 @@
 # Electronic Knitting Machine Controller
-Inspired by the Knitic project, which seems to have mostly been abandoned. 
+Inspired by the [Knitic project](https://github.com/mcanet/knitic), which 
+seems to have mostly been abandoned. 
 This board is to be a replacement for the mainboard within the machine, 
 initially targeting Brother KH-930, KH-940 machines. While it disables the 
 main touch controls, there is available a serial port which can control 
