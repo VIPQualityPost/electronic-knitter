@@ -1,0 +1,3 @@
+bridge pins 23,24 U301
+bridge pins 11,12,13 U301
+connect C301, C302 to ground.
