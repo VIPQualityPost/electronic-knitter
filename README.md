@@ -11,7 +11,7 @@ analyzer connector, either for debugging, or direct control of the
 solenoid array if you wish to just ignore the microcontroller on the 
 board.
 
-![Machine mainboard](render.png)
+![Machine mainboard](board.jpg)
 
 This board also has a standalone power supply, so you can remove or ignore 
 the transformer and power supply PCB built into the machine, which is 
