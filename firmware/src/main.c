@@ -39,6 +39,19 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define KH930
+#define K_CARRIAGE
+
+#define END_LEFT		0xFF
+#define END_RIGHT 		0
+
+#define OFFSET_LEFT 	40
+#define OFFSET_RIGHT	16
+
+#define EOL_L_MIN
+#define EOL_L_MAX
+#define EOL_R_MIN
+#define EOL_R_MAX
 
 /* USER CODE END PD */
 
@@ -61,9 +74,16 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-int ADC_FLAG=0;
-uint16_t EOL_result[2];
-char txBuf[64];
+
+uint16_t 	EOL_result[2];		/* ADC reading [0] left, [1] right */
+uint16_t 	currentPattern;		/* current solenoid pattern */
+
+uint8_t 	rowPattern[200]; 	/* 200 bytes (bed width) */
+uint8_t 	currentDir;			/* Encoder direction */
+uint8_t 	currentPosition; 	/* TIM1->CNT, use to sense movement */
+
+char 		txBuf[64];			/* Used for USB serial messages */
+
 /* USER CODE END 0 */
 
 /**
@@ -104,6 +124,9 @@ int main(void)
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
+  /* Set the solenoids all off */
+  GPIOB->ODR = 0x0000;
+
   /* Start the encoder and timers */
   HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
   HAL_TIM_Base_Start_IT(&htim2);
@@ -111,24 +134,22 @@ int main(void)
 
   /* Start the ADC */
   HAL_ADCEx_Calibration_Start(&hadc1);
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)EOL_result, 2);
+  // HAL_ADC_Start_DMA(&hadc1, (uint32_t *)EOL_result, 2);
 
-  sprintf(txBuf,"Starting device.\r\n");
-  CDC_Transmit_FS((uint8_t *)txBuf, strlen(txBuf));
-
-  HAL_Delay(1000);
   /* USER CODE END 2 */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-    if(ADC_FLAG){
-      ADC_FLAG=0;
-      HAL_GPIO_WritePin(HEARTBEAT_GPIO_Port, HEARTBEAT_Pin, GPIO_PIN_RESET);
 
-    }
-    HAL_Delay(500);
+	if(currentPosition != TIM1->CNT){
+		currentDir = TIM1->CNT - currentPosition;
+		currentPosition = TIM1->CNT;
+
+		advanceCarriage();
+	}
+    /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
@@ -184,6 +205,61 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 /**
+ * @brief Write a pattern to the solenoid bank.
+ * @param The 16-solenoid pattern to set.
+ * @retval none
+ * 
+ * There are 16 solenoids, we can control which needles are selected based on the 
+ * state of belt-phase and this solenoid bank.
+*/
+void writeSolenoids(uint16_t pattern){
+  /* Store the pattern to write somewhere so we can read it later. */
+  currentPattern = pattern;
+
+  /* Need to byteswap because I swapped the banks on the connector. */
+  pattern = (pattern << 8) | (pattern >>8);
+  GPIOB->ODR = pattern;
+}
+
+void advanceCarriage(){
+
+	/* Belt phase indicates which needle selector plate is active */
+	uint8_t beltPhase = HAL_GPIO_ReadPin(BELTPHASE_GPIO_Port, BELTPHASE_Pin);
+	uint8_t nextSolenoid;
+	uint8_t stitchPosition;
+
+	/* Moving to the right */
+	if(currentDir){
+		if(currentPosition <= (END_LEFT - OFFSET_LEFT)){
+			stitchPosition = currentPosition - OFFSET_RIGHT;
+			if(beltPhase){
+				nextSolenoid = (currentPosition+8)%16;
+			}
+			else{
+				nextSolenoid = (currentPosition)%16;
+			}
+		}
+	}
+	/* Moving to the left */
+	else{
+		if(currentPosition > OFFSET_RIGHT){
+			stitchPosition = currentPosition - OFFSET_LEFT;
+			if(beltPhase){
+				nextSolenoid = (currentPosition)%16;
+			}
+			else{
+				nextSolenoid = (currentPosition+8)%16;
+			}
+		}
+	}
+
+	if(0 <= stitchPosition && stitchPosition <=200){
+		uint8_t stitchPixel = rowPattern[stitchPosition];
+		HAL_GPIO_WritePin(GPIOB, nextSolenoid, stitchPixel);
+	}
+}
+
+/**
  * @brief Timer overflow callback
  * @param Timer handle
  * @retval none
@@ -196,6 +272,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
     HAL_GPIO_TogglePin(HEARTBEAT_GPIO_Port, HEARTBEAT_Pin);
   }
   if(htim->Instance==TIM3){
+    /* Kick off the ADC reading. */
     HAL_ADC_Start_DMA(&hadc1, (uint32_t *)EOL_result, 2);
   }
 }
@@ -206,7 +283,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
  * @retval none
  * 
  * This function is called when the ADC finishes converting all the requested channels,
- * triggered by TIM3 10kHz interrupt (TRGO)
+ * triggered by TIM3 interrupt 
 */
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
   sprintf(txBuf, "IN0: %i, IN1: %i\r\n", EOL_result[0], EOL_result[1]);
