@@ -1858,7 +1858,8 @@
     (effects (font (size 1.27 1.27)) (justify left bottom))
     (uuid a94bdcc3-4c56-4358-baec-f760e6736561)
   )
-  (text "Vout = 1.23* (R2/R1+1)" (at 213.36 74.93 0)
+  (text "Vout = 1.23* (R2/R1+1)\ndue to BOM simplification this comes out 5.25V \nbut this is OK for parts used (SN74LVC4245)"
+    (at 203.2 80.645 0)
     (effects (font (size 1.27 1.27)) (justify left bottom))
     (uuid b3fdeb35-449c-4e69-a614-88aff3083ace)
   )
@@ -3604,7 +3605,7 @@
     (property "Reference" "R406" (at 248.92 43.815 90)
       (effects (font (size 1.27 1.27)))
     )
-    (property "Value" "3.1k" (at 250.825 45.72 90)
+    (property "Value" "3.3k" (at 250.825 45.72 90)
       (effects (font (size 1.27 1.27)))
     )
     (property "Footprint" "Resistor_SMD:R_0603_1608Metric" (at 250.825 41.275 0)

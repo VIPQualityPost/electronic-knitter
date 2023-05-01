@@ -116,6 +116,7 @@
                 "PLATFORMIO=60106",
                 "STM32F103xB",
                 "STM32F1",
+                "SWAP_SOLENOID",
                 "USE_HAL_DRIVER",
                 "F_CPU=72000000L",
                 ""

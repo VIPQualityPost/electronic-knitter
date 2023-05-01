@@ -69,7 +69,7 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+void advanceCarriage(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -78,9 +78,13 @@ void SystemClock_Config(void);
 uint16_t 	EOL_result[2];		/* ADC reading [0] left, [1] right */
 uint16_t 	currentPattern;		/* current solenoid pattern */
 
-uint8_t 	rowPattern[200]; 	/* 200 bytes (bed width) */
-uint8_t 	currentDir;			/* Encoder direction */
+uint8_t 	bitPattern[25];		/* Pattern as received from USB (200 bits) */
+uint8_t 	bytePattern[200]; 	/* 200 bytes (bed width) */
+uint8_t 	currentDir = 0;		/* Encoder direction */
 uint8_t 	currentPosition; 	/* TIM1->CNT, use to sense movement */
+uint8_t   	cmdMsg;				/* Used for control flow, first byte of USB packet*/
+uint8_t   	startNeedle;		/* Beginning needle, second byte USB packet */
+uint8_t   	stopNeedle;			/* Stopping needle, third byte from USB packet */
 
 char 		txBuf[64];			/* Used for USB serial messages */
 
@@ -133,7 +137,7 @@ int main(void)
   HAL_TIM_Base_Start_IT(&htim3);
 
   /* Start the ADC */
-  HAL_ADCEx_Calibration_Start(&hadc1);
+  	HAL_ADCEx_Calibration_Start(&hadc1);
   // HAL_ADC_Start_DMA(&hadc1, (uint32_t *)EOL_result, 2);
 
   /* USER CODE END 2 */
@@ -141,7 +145,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
 	if(currentPosition != TIM1->CNT){
 		currentDir = TIM1->CNT - currentPosition;
 		currentPosition = TIM1->CNT;
@@ -216,17 +219,29 @@ void writeSolenoids(uint16_t pattern){
   /* Store the pattern to write somewhere so we can read it later. */
   currentPattern = pattern;
 
-  /* Need to byteswap because I swapped the banks on the connector. */
-  pattern = (pattern << 8) | (pattern >>8);
-  GPIOB->ODR = pattern;
+	#ifdef SWAP_SOLENOID
+		/* Need to byteswap on rev1 boards because I swapped the banks on the connector. */
+		pattern = (pattern << 8) | (pattern >>8);
+	#endif 
+
+	GPIOB->ODR = pattern;
 }
 
+/**
+ * @brief Move the carriage one needle and set corresponding solenoid.
+ * @param None
+ * @retval None
+ * 
+ * This function handles checking the belt phase when moving the carriage one direction or other.
+ * After selecting the right solenoid and adjusting the position to make up for slop at end of lines, 
+ * it will set the new pattern on the solenoids.
+*/
 void advanceCarriage(){
 
 	/* Belt phase indicates which needle selector plate is active */
 	uint8_t beltPhase = HAL_GPIO_ReadPin(BELTPHASE_GPIO_Port, BELTPHASE_Pin);
-	uint8_t nextSolenoid;
-	uint8_t stitchPosition;
+	uint8_t nextSolenoid = 0;
+	uint8_t stitchPosition = 0;
 
 	/* Moving to the right */
 	if(currentDir){
@@ -254,9 +269,59 @@ void advanceCarriage(){
 	}
 
 	if(0 <= stitchPosition && stitchPosition <=200){
-		uint8_t stitchPixel = rowPattern[stitchPosition];
-		HAL_GPIO_WritePin(GPIOB, nextSolenoid, stitchPixel);
+		uint8_t stitchPixel = bytePattern[stitchPosition];
+		#ifdef SWAP_SOLENOID
+			/* Can't use GPIO_WritePin because solenoid banks swapped */
+			uint32_t odr = currentPattern;
+			uint16_t newPattern = ((odr & stitchPixel) << nextSolenoid) | (~odr & stitchPixel);
+			writeSolenoids(newPattern);
+		#else
+			HAL_GPIO_WritePin(GPIOB, nextSolenoid, stitchPixel);
+			currentPattern = GPIOB->ODR;
+		#endif
 	}
+}
+
+/**
+ * @brief Expand the transmitted 200 bits to 200 bytes.
+ * @param none
+ * @retval none
+ * 
+ * In order to make things easier for transmitting (USB packet size limit 64 bytes) we transmit 25 bytes (200 bits),
+ * one bit for each needle. However, it's easier to look up in the pattern if there is a byte for each bit since 
+ * then we can just look up the element according to the needle number. This function expands the 25 byte bytePattern 
+ * into the 200 bytes bitPattern. We need to do this after we get the packet from CDC_Receive_FS().
+*/
+void bitToBytePattern(void){
+
+	uint8_t i,j;
+	uint8_t bitPatternSize = 25; /* sizeof bytePattern / sizeof *bytePattern; */
+	uint8_t byteSize = sizeof *bitPattern;
+
+	/* For each byte in bytePattern */
+	for(i=0;i<bitPatternSize;i++){
+		/* For each bit in the byte */
+		for(j=0; j<byteSize; j++){
+      /* 24*8 + 8 = 200 bytes! Need to mask bits from byte with shifting. */
+			bytePattern[(i*byteSize)+j] = bitPattern[i] & (0x01 << j);
+		}
+	}
+}
+
+/**
+ * @brief Print the current pattern from bitPattern to serial port.
+ * @param none
+ * @retval none
+ * 
+ * This is mostly a diagnostic function to check that the pattern was both correctly received over serial and then
+ * translated into the 200-byte pattern correctly.
+*/
+void printPatternSerial(void){
+  for(int i=0; i<4; i++){
+    /* Copy the pattern from bitPattern into txBuf in chunks of 50? */
+    memcpy((uint8_t *)txBuf, (uint8_t *)(bitPattern+(i*50)), 50);
+    CDC_Transmit_FS((uint8_t *)txBuf, 50);
+  }
 }
 
 /**
@@ -289,6 +354,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){
   sprintf(txBuf, "IN0: %i, IN1: %i\r\n", EOL_result[0], EOL_result[1]);
   CDC_Transmit_FS((uint8_t *)txBuf, strlen(txBuf));
 }
+
 /* USER CODE END 4 */
 
 /**
