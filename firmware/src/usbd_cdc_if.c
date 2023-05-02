@@ -259,19 +259,15 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
+  /* Catch the serial data, dump back to the AYAB buffer, then OK next packet. */
+  extern uint8_t *ayabBuf; 
+  ayabBuf = &Buf[0];
 
-  extern uint8_t cmdMsg;
-  extern uint8_t startNeedle;
-  extern uint8_t stopNeedle;
-  extern uint8_t* bytePattern;
-
-  cmdMsg = Buf[0];
-  startNeedle = Buf[1];
-  stopNeedle = Buf[2];
-  bytePattern = &Buf[3];
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   return (USBD_OK);
+
+
   /* USER CODE END 6 */
 }
 
