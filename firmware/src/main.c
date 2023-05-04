@@ -4,7 +4,7 @@
  * @brief          : Main program body
  * @author		   : matei
  ******************************************************************************
-*/
+ */
 
 /* Includes */
 #include "main.h"
@@ -20,65 +20,87 @@
 
 /* Defines */
 #define HW_TEST 0
-#define SWAP_SOLENOID 1
+#define SWAP_SOLENOID 1 /* If on rev1 boards with solenoid banks swapped. */
 
 #define FW_AYAB 1 /* Enable if using the AYAB software. */
 
 #define KH930
-#define K_CARRIAGE
+#define NUMNEEDLES 200
 
-#define END_LEFT 0xFF
-#define END_RIGHT 0
+#define END_LEFT 0
+#define END_RIGHT 0xFF
 
-#define OFFSET_LEFT 40
-#define OFFSET_RIGHT 16
+#define OFFSET_LEFT 12
+#define OFFSET_RIGHT 12
 
-#define EOL_L_MIN
-#define EOL_L_MAX
-#define EOL_R_MIN
-#define EOL_R_MAX
+#define EOL_L_MIN 0xFF
+#define EOL_L_MAX 0xFF
+#define EOL_R_MIN 0xFF
+#define EOL_R_MAX 0xFF
+
+#define getBP() HAL_GPIO_ReadPin(BELTPHASE_GPIO_Port, BELTPHASE_Pin)
 
 /* Prototypes */
 void SystemClock_Config(void);
 void writeSolenoids(uint16_t);
 void advanceCarriage(void);
+uint8_t carriageOffset(void);
 void testEncoders(void);
 void testEOL(void);
 void testSolenoids(void);
+void calibrateEOL(void);
 
 /* Hardware peripherals */
-uint16_t EOL_result[2];	 /* ADC reading [0] left, [1] right */
+uint16_t EOL_result[2]; /* ADC reading [0] left, [1] right */
 
 /* Machine variables */
 uint8_t machineType;
 uint8_t machineInitialized;
-enum kmStates{RUN, STOP, INIT, WAIT, DONE};
-enum kmStates machineState;
+enum machineStates
+{
+	INIT,
+	RUN,
+	TEST,
+	CALIBRATE
+} machineState;
+enum carriageTypes
+{
+	UNKNOWN,
+	K,
+	L,
+	G
+} carriageType;
 
 /* Encoder states */
-uint8_t startDir;
-uint8_t currentDir;
-uint8_t currentPosition;
-uint8_t lastBP;
+enum {
+	RIGHT, //0, TIM1 increment
+	LEFT	//1, TIM1 decrement
+}currentDir; /* Using shift in currentPosition to determine direction. */
+
+uint8_t currentPosition; /* Compare with TIM1->CNT to see relative movement. */
+uint8_t bpShift;			 /* belt phase position during EOL stop. */
 
 /* Pattern information */
-uint16_t 	currentPattern; /* current solenoid pattern */
+uint16_t currentPattern; /* current solenoid pattern */
 
-uint8_t 	bitPattern[25];	/* The entire line to be knitted */
-
-uint8_t 	startNeedle = 0xFF;
-uint8_t 	stopNeedle = 0xFF;
-uint8_t 	currentRow;
-uint8_t 	lastRow;
+uint8_t bitPattern[25]; 	/* The entire line to be knitted [25 bytes = 200 bits] 	*/
+uint8_t currentByte;	/* Current byte from the bitPattern array. */
+uint8_t startNeedle = 0xFF; /* Start needle for the pattern (subset of all needles) */
+uint8_t stopNeedle = 0xFF;	/* End needle for the pattern (subset of all needles)	*/
+uint8_t passStart;
+uint8_t passStop;
+uint8_t currentRow = 0; 	/* The row currently being worked by the machine. 		*/
+uint8_t lastRow; 			/* Flag if the line received from AYAB is the last line of the pattern */
 
 /* General buffer*/
-char 	debugString[128];		 /* Send to AYAB with txAYAB(debug) */
 
 /* AYAB specific stuff*/
 /* Firmware version information kept in ayab.h */
-uint8_t *ayabBuf;
-uint8_t lastCmd;
-uint8_t crc8_cs;
+uint8_t *ayabBuf; /* Pointer to AYAB serial buffer. */
+uint8_t continuousReport;
+uint8_t crc8_cs;  /* Checksum not used for anything now. */
+
+char debugString[128]; /* Send to AYAB with txAYAB(debug) */
 
 /**
  * @brief  The application entry point.
@@ -102,10 +124,12 @@ int main(void)
 	MX_TIM3_Init();
 
 	/* Set the solenoids all off */
-	GPIOB->ODR = 0x0000;
+	machineState = INIT;
+	carriageType = UNKNOWN;
 
 	/* Start the encoder and timers */
-	HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+	
+	HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_1);
 	HAL_TIM_Base_Start_IT(&htim2);
 	HAL_TIM_Base_Start_IT(&htim3);
 
@@ -114,26 +138,44 @@ int main(void)
 
 	while (1)
 	{
-		if (currentPosition != TIM1->CNT)
+		switch (machineState)
 		{
-			/* Check the direction and update the new position. */
-			currentDir = TIM1->CNT - currentPosition;
-			currentPosition = TIM1->CNT;
+		case INIT:
+			sprintf(debugString, "Waiting for pattern start signals...\r\n");
+			txAYAB(debug);
+			HAL_Delay(500);
+			break;
+		
+		case RUN:
+			if(currentPosition != TIM1->CNT){
+				currentPosition = TIM1->CNT;
+				currentDir = (TIM1->CR1 | TIM_CR1_DIR) >> TIM_CR1_DIR_Pos;
+				// currentDir = TIM1->CNT - currentPosition; 
 
-			uint8_t beltPhase = HAL_GPIO_ReadPin(BELTPHASE_GPIO_Port, BELTPHASE_Pin);
-
-			if(lastBP != beltPhase){
-				/* If the belt phase changes, then we need to byte swap. */
-				lastBP = beltPhase;
-				uint8_t swappedPattern = (currentPattern << 8) | (currentPattern >> 8);
-				writeSolenoids(swappedPattern);
-			}
-
-			if (machineState == RUN)
-			{
 				advanceCarriage();
+
+				if(continuousReport){
+					txAYAB(indState);
+				}
 			}
+			break;
+
+		case CALIBRATE:
+			calibrateEOL();
+			HAL_Delay(100);
+			break;
+
+		case TEST:
+			testEncoders();
+			testEOL();
+			testSolenoids();
+			HAL_Delay(250);
+			break;
+
+		default:
+			break;
 		}
+
 	}
 }
 
@@ -202,7 +244,7 @@ void writeSolenoids(uint16_t pattern)
 		pattern = (pattern << 8) | (pattern >> 8);
 	}
 
-	GPIOB->ODR = pattern;
+	GPIOB->ODR = (uint32_t)pattern;
 }
 
 /**
@@ -210,13 +252,114 @@ void writeSolenoids(uint16_t pattern)
  * @param None
  * @retval None
  *
- * This function handles checking the belt phase when moving the carriage one direction or other.
- * After selecting the right solenoid and adjusting the position to make up for slop at end of lines,
- * it will set the new pattern on the solenoids.
+ * This function handles checking to see if we should write a new byte to
+ * the solenoid pattern bank. Need to handle offset slop ?
  */
 void advanceCarriage()
 {
-	writeSolenoids(0xFFFF);
+	/** 
+	 * machine orientation
+	 * [EOL_L]	   [EOL_R]
+	 * [byte 0 ][....][25]
+	 * 0123456789......200
+	*/
+	uint8_t realPosition = currentPosition - carriageOffset();
+
+	switch (currentDir)
+	{
+	case LEFT:
+		/* Moving left */
+		if (currentPosition <= OFFSET_RIGHT)
+		{
+			/* If our position is at the edge of a solenoid bank then we can move to the next byte in bitPattern */
+			if (currentPosition % 16 == 0)
+			{
+				currentByte--;
+
+			}
+		}
+		break;
+
+	case RIGHT:
+		/* Moving right */
+		if (currentPosition >= OFFSET_LEFT)
+		{
+			if (currentPosition % 16 == 0)
+			{	
+				currentByte++;
+			}
+		}
+		break;
+	}
+
+	uint16_t newPattern = bitPattern[currentByte];
+
+	if(bpShift){
+		newPattern = (newPattern << 8) | (newPattern >> 8);
+	}
+	writeSolenoids(newPattern);
+
+	if(currentPosition == startNeedle){
+		passStart = 1;
+	}
+	else if(currentPosition == stopNeedle){
+		passStop =1;
+	}
+
+	if(passStart && passStop){
+		/* We passed all the active needles so we can ask for the new line. */
+		txAYAB(reqLine);
+
+		/* Clear the progress flags. */
+		passStart = 0;
+		passStop = 0;
+	}
+
+	// Start a read so the next time we move we know if we are in front of a sensor.
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t *)EOL_result, 2);
+}
+
+/**
+ * @brief 
+ * @param
+ * @retval 
+ * 
+ * 
+*/
+uint8_t carriageOffset(void)
+{
+	switch (currentDir)
+	{
+	case LEFT:
+		/* moving left */
+
+		if (carriageType == G)
+		{
+			return 8;
+		}
+		else
+		{
+			return 40;
+		}
+		break;
+
+	case RIGHT:
+		/* moving right */
+
+		if (carriageType == G)
+		{
+			return 32;
+		}
+		else
+		{
+			return 16;
+		}
+		break;
+
+	default:
+		return 0;
+		break;
+	}
 }
 
 /**
@@ -232,19 +375,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	if (htim->Instance == TIM2)
 	{
 		HAL_GPIO_TogglePin(HEARTBEAT_GPIO_Port, HEARTBEAT_Pin);
-
-		if (lastCmd != *ayabBuf)
-		{
-			/* If there is a new command ID in the buffer, then we need to figure out what to do. */
-			rxAYAB();
-		}
-
-		if (HW_TEST)
-		{
-			testEncoders();
-			testEOL();
-			testSolenoids();
-		}
 	}
 	if (htim->Instance == TIM3)
 	{
@@ -259,24 +389,45 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
  * @retval none
  *
  * This function is called when the ADC finishes converting all the requested channels,
- * triggered by TIM3 interrupt
+ * via DMA into specified buffer EOL_result, triggered by TIM3 interrupt.
  */
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-	sprintf(debugString, "IN0: %i, IN1: %i\r\n", EOL_result[0], EOL_result[1]);
-	CDC_Transmit_FS((uint8_t *)debugString, strlen(debugString));
+	if (EOL_result[0] <= EOL_L_MIN)
+	{
+		carriageType = L;
+		currentPosition = OFFSET_LEFT + 28;
+		currentByte = 0;
+	}
+	else if (EOL_result[0] >= EOL_L_MAX)
+	{
+		carriageType = K;
+		currentPosition = OFFSET_LEFT + 28;
+		currentByte = 0;
+	}
+	else if (EOL_result[1] <= EOL_R_MIN)
+	{
+		carriageType = L;
+		currentPosition = OFFSET_RIGHT - 28;
+		currentByte = 25;
+	}
+	else if (EOL_result[1] >= EOL_R_MAX)
+	{
+		carriageType = K;
+		currentPosition = OFFSET_RIGHT - 28;
+		currentByte = 25;
+	}
 }
 
 void testSolenoids(void)
 {
 	/* Just increment the bank, cover 0x00 to 0xFF */
-	GPIOB->ODR = GPIOB->ODR + 0x01;
+	GPIOB->ODR = GPIOB->ODR + 1;
 }
 
 void testEncoders(void)
 {
-	uint8_t beltPhase = HAL_GPIO_ReadPin(BELTPHASE_GPIO_Port, BELTPHASE_Pin);
-	sprintf(debugString, "POSITION: %i, DIRECTION: %i, BELT PHASE: %i\r\n", (uint8_t)TIM1->CNT, currentDir, beltPhase);
+	sprintf(debugString, "POSITION: %i, DIRECTION: %i, BELT PHASE: %i\r\n", (uint8_t)TIM1->CNT, currentDir, getBP());
 	CDC_Transmit_FS((uint8_t *)debugString, strlen(debugString));
 }
 
@@ -286,9 +437,10 @@ void testEOL(void)
 	CDC_Transmit_FS((uint8_t *)debugString, strlen(debugString));
 }
 
-// void calibrateEOL(void)
-// {
-// }
+void calibrateEOL(void)
+{
+
+}
 
 /**
  * @brief  This function is executed in case of error occurrence.

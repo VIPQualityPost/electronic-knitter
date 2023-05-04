@@ -14,6 +14,9 @@
 extern uint8_t *ayabBuf;
 extern uint8_t *bitPattern;
 
+extern uint8_t EOL_result[2];
+
+extern uint8_t  carriageType;
 extern uint8_t  machineType;
 extern uint8_t  machineState;
 extern uint8_t  machineInitialized;
@@ -21,10 +24,11 @@ extern uint8_t  machineStart;
 
 extern uint8_t  startNeedle;
 extern uint8_t  stopNeedle;
+extern uint8_t  currentDir;
+extern uint8_t  currentPosition;
 extern uint8_t  currentRow;
 extern uint8_t  lastRow;
 extern uint8_t  crc8_cs;
-extern uint8_t  lastCmd;
 
 char debugString[128];
 
@@ -46,6 +50,7 @@ void rxAYAB(void)
 		machineType =   ayabBuf[1];
 		startNeedle =   ayabBuf[2];
 		stopNeedle =    ayabBuf[3];
+        txAYAB(cnfStart);
 		break;
 
 	case cnfLine:
@@ -65,8 +70,6 @@ void rxAYAB(void)
 	default:
 		break;
 	}
-
-    lastCmd = ayabBuf[0];
 }
 
 /**
@@ -80,6 +83,7 @@ void rxAYAB(void)
 */
 void txAYAB(uint8_t cmd)
 {
+    /* Should we check if the USB tx is busy? */
     uint8_t ayabPacket[64]; /* Don't use more than one USB packet. */
     ayabPacket[0] = cmd;    /* First byte of the message is the ID */
 
@@ -91,10 +95,12 @@ void txAYAB(uint8_t cmd)
         then we can just return that a valid config was received. */
         if(startNeedle <= 198 && stopNeedle <= 200){
             ayabPacket[1] = 0x01;
+            machineState = 1; /* RUN */
         }
         else{
             ayabPacket[1] = 0x00;
         }
+
         CDC_Transmit_FS((uint8_t *)ayabPacket, 2);
 		break;
 
@@ -114,13 +120,20 @@ void txAYAB(uint8_t cmd)
 
 	case indState:
         /* Indicate if initialized or not. */
-        if(machineInitialized){
-            ayabPacket[1] = 0x01;
-        }
-        else{
-            ayabPacket[1] = 0x00;
-        }
-        CDC_Transmit_FS((uint8_t *)ayabPacket, 2);
+        ayabPacket[1] = machineInitialized;
+
+        /* EOL sensor states */
+        ayabPacket[2] = EOL_result[0] >> 8;
+        ayabPacket[3] = EOL_result[0] & 0xFF;
+        ayabPacket[4] = EOL_result[1] >> 8;
+        ayabPacket[5] = EOL_result[1] & 0xFF;
+
+        /* Machine information */
+        ayabPacket[6] = carriageType;
+        ayabPacket[7] = machineType;
+        ayabPacket[8] = currentDir;
+
+        CDC_Transmit_FS((uint8_t *)ayabPacket, 9);
 		break;
 
 	case debug:
@@ -131,6 +144,4 @@ void txAYAB(uint8_t cmd)
 	default:
 		break;
 	}
-
-    lastCmd = cmd;
 }

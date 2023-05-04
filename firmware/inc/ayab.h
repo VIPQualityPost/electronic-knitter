@@ -15,8 +15,9 @@
 
 /* AYAB firmware defines */
 #define versionIdentifier 0x00
-#define versionMajor 0x00
-#define versionMinor 0x00
+#define versionMajor 0
+#define versionMinor 95
+#define versionAPI   6
 
 /* AYAB API commands v6 */
 #define unknown -2
