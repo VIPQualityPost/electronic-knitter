@@ -56,7 +56,7 @@ void rxAYAB(void)
 	case cnfLine:
         /* Send information about a new row from the PC. */
 		currentRow =     ayabBuf[1];
-        /* Don't want to use pointer because next packet will overwrite ayabBuf. */
+        /* Don't want to use pointer because next packet will clobber ayabBuf. */
 		memcpy(bitPattern, &ayabBuf[2], 25); 
 		lastRow =       ayabBuf[27];
 		crc8_cs =       ayabBuf[28];
@@ -95,27 +95,27 @@ void txAYAB(uint8_t cmd)
         then we can just return that a valid config was received. */
         if(startNeedle <= 198 && stopNeedle <= 200){
             ayabPacket[1] = 0x01;
-            machineState = 1; /* RUN */
+            machineState = 1; /* HOMING */
         }
         else{
             ayabPacket[1] = 0x00;
         }
 
-        CDC_Transmit_FS((uint8_t *)ayabPacket, 2);
+        slipSend((uint8_t *)ayabPacket, 2);
 		break;
 
 	case reqLine:
 		/* Request a new line from the software */
         ayabPacket[1] = currentRow + 1;
-        CDC_Transmit_FS((uint8_t *)ayabPacket, 2);
+        slipSend((uint8_t *)ayabPacket, 2);
         break;
 
 	case cnfInfo:
         /* Respond to reqInfo with firmware version identifier, major version, minor version. */
-        ayabPacket[1] = versionIdentifier;
+        ayabPacket[1] = versionAPI;
         ayabPacket[2] = versionMajor;
         ayabPacket[3] = versionMinor;
-        CDC_Transmit_FS((uint8_t *)ayabPacket, 4);
+        slipSend((uint8_t *)ayabPacket, 4);
 		break;
 
 	case indState:
@@ -133,15 +133,22 @@ void txAYAB(uint8_t cmd)
         ayabPacket[7] = machineType;
         ayabPacket[8] = currentDir;
 
-        CDC_Transmit_FS((uint8_t *)ayabPacket, 9);
+        slipSend((uint8_t *)ayabPacket, 9);
 		break;
 
 	case debug:
         /* Send the debug string to the software */
-        
+        ayabPacket[1] = 0xFF;
 		break;
 
 	default:
 		break;
 	}
+}
+
+void slipSend(uint8_t *packet, uint8_t len){
+    /* The pointer should be to first item... so we can just add bytes at the end */
+    packet[len] = '\r';
+    packet[len+1] = '\n';
+    CDC_Transmit_FS((uint8_t *)packet, (len+2));
 }

@@ -14,7 +14,7 @@
 #include "main.h"
 
 /* AYAB firmware defines */
-#define versionIdentifier 0x00
+#define versionIdentifier 6
 #define versionMajor 0
 #define versionMinor 95
 #define versionAPI   6
