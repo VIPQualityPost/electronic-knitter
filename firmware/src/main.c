@@ -20,7 +20,7 @@
 
 /* Defines */
 #define HW_TEST 0
-#define FW_AYAB 0
+#define FW_AYAB 1
 #define SWAP_SOLENOID 1 /* If on rev1 boards with solenoid banks swapped. */
 
 #define KH930
@@ -32,9 +32,9 @@
 #define OFFSET_LEFT 12
 #define OFFSET_RIGHT 12
 
-#define EOL_L_MIN 0xFF
+#define EOL_L_MIN 0x00
 #define EOL_L_MAX 0xFF
-#define EOL_R_MIN 0xFF
+#define EOL_R_MIN 0x00
 #define EOL_R_MAX 0xFF
 
 #define getBP() HAL_GPIO_ReadPin(BELTPHASE_GPIO_Port, BELTPHASE_Pin)
@@ -102,7 +102,7 @@ uint8_t lastRow;		/* Flag if the line received from AYAB is the last line of the
 
 /* AYAB specific stuff*/
 /* Firmware version information kept in ayab.h */
-uint8_t *ayabBuf; /* Pointer to AYAB serial buffer. */
+uint8_t *ayabRX; /* Pointer to AYAB serial buffer. */
 uint8_t continuousReport;
 uint8_t crc8_cs; /* Checksum not used for anything now. */
 
@@ -154,7 +154,7 @@ int main(void)
 			sprintf(debugString, "Waiting for pattern start signals...\r\n");
 			if (FW_AYAB)
 			{
-				txAYAB(debug);
+				// txAYAB(debug);
 			}
 			else
 			{
@@ -331,8 +331,8 @@ void advanceCarriage()
 		{
 			if (currentPosition % 8 == 0)
 			{
-				if (patternPointer > &bitPattern[0] && patternPointer < &bitPattern[24] && 
-							currentPosition > OFFSET_LEFT && currentPosition < OFFSET_RIGHT)
+				if (patternPointer > &bitPattern[0] && patternPointer < &bitPattern[24] &&
+					currentPosition > OFFSET_LEFT && currentPosition < OFFSET_RIGHT)
 				{
 					patternPointer++;
 					newByte = 1;
@@ -496,67 +496,81 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 	case RUN:
 		if (EOL_result[0] <= EOL_L_MIN)
 		{
-			/* L Carriage */
-			carriageType = L;
-			machineHomed = 1;
-			TIM1->CNT = OFFSET_LEFT + 28;
-			patternPointer = &bitPattern[0];
-			/* From the table in service manual. */
-			if (beltPhase)
+			/* We only want to set the position when we pass the end marker in the direction
+			that we are also going to do the line in. */
+			if (currentDir == RIGHT)
 			{
-				bpShift = 0;
-			}
-			else
-			{
-				bpShift = 1;
+				/* L Carriage */
+				carriageType = L;
+				machineHomed = 1;
+				TIM1->CNT = OFFSET_LEFT + 28;
+				patternPointer = &bitPattern[0];
+				/* From the table in service manual. */
+				if (beltPhase)
+				{
+					bpShift = 0;
+				}
+				else
+				{
+					bpShift = 1;
+				}
 			}
 		}
 		else if (EOL_result[0] >= EOL_L_MAX)
 		{
-			/* K Carriage */
-			carriageType = K;
-			machineHomed = 1;
-			TIM1->CNT = OFFSET_LEFT + 28;
-			patternPointer = &bitPattern[0];
-			if (beltPhase)
+			if (currentDir == RIGHT)
 			{
-				bpShift = 1;
-			}
-			else
-			{
-				bpShift = 0;
+				/* K Carriage */
+				carriageType = K;
+				machineHomed = 1;
+				TIM1->CNT = OFFSET_LEFT + 28;
+				patternPointer = &bitPattern[0];
+				if (beltPhase)
+				{
+					bpShift = 1;
+				}
+				else
+				{
+					bpShift = 0;
+				}
 			}
 		}
 		else if (EOL_result[1] <= EOL_R_MIN)
 		{
-			/* L Carriage */
-			carriageType = L;
-			machineHomed = 1;
-			TIM1->CNT = OFFSET_RIGHT - 28;
-			patternPointer = &bitPattern[24];
-			if (beltPhase)
+			if (currentDir == LEFT)
 			{
-				bpShift = 0;
-			}
-			else
-			{
-				bpShift = 1;
+				/* L Carriage */
+				carriageType = L;
+				machineHomed = 1;
+				TIM1->CNT = OFFSET_RIGHT - 28;
+				patternPointer = &bitPattern[24];
+				if (beltPhase)
+				{
+					bpShift = 0;
+				}
+				else
+				{
+					bpShift = 1;
+				}
 			}
 		}
 		else if (EOL_result[1] >= EOL_R_MAX)
 		{
-			/* K Carriage */
-			carriageType = K;
-			machineHomed = 1;
-			TIM1->CNT = OFFSET_RIGHT - 28;
-			patternPointer = &bitPattern[24];
-			if (beltPhase)
+			if (currentDir == LEFT)
 			{
-				bpShift = 0;
-			}
-			else
-			{
-				bpShift = 1;
+				/* K Carriage */
+				carriageType = K;
+				machineHomed = 1;
+				TIM1->CNT = OFFSET_RIGHT - 28;
+				patternPointer = &bitPattern[24];
+				if (beltPhase)
+				{
+					bpShift = 0;
+				}
+				else
+				{
+					bpShift = 1;
+				}
 			}
 		}
 		break;

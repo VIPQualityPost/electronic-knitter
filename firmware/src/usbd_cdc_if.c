@@ -20,6 +20,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "usbd_cdc_if.h"
+#include "ayab.h"
 
 /* USER CODE BEGIN INCLUDE */
 
@@ -258,17 +259,16 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
   */
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
-  /* USER CODE BEGIN 6 */
-  /* Catch the serial data, dump back to the AYAB buffer, then OK next packet. */
-  extern uint8_t *ayabBuf; 
-  ayabBuf = &Buf[0];
+  /* Attach the buffer to the ayabRX pointer.*/
+  extern uint8_t *ayabRX; 
+
+  /* The SLIP packet is double ended so we just skip the first byte in the received data.*/
+  ayabRX = &Buf[1];
+  rxAYAB();
 
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
   return (USBD_OK);
-
-
-  /* USER CODE END 6 */
 }
 
 /**

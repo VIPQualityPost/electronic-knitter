@@ -11,7 +11,9 @@
 #include "string.h"
 #include "usbd_cdc_if.h"
 
-extern uint8_t *ayabBuf;
+void slipSend(uint8_t*, uint8_t);
+
+extern uint8_t *ayabRX;
 extern uint8_t *bitPattern;
 
 extern uint8_t EOL_result[2];
@@ -38,34 +40,42 @@ char debugString[128];
  * @retval  none
  * 
  * This function interacts with the AYAB API v6 to receive serial data
- * from the PC and then configure the state of the hardware.
+ * from the PC and then configure the state of the hardware. ayabRX is 
+ * a global pointer in main.c that is attached to the USB CDC rx buffer.
+ * It should only be called from CDC_Recieve_FS (CDC rx callback). It's 
+ * not meant for you to call this in your own code.
 */
 void rxAYAB(void)
 {
-	switch (*ayabBuf)
+	switch (*ayabRX)
 	{
 	case reqStart:
         /* AYAB software requests to start a new image. 
             Provide machine type and worked needles */
-		machineType =   ayabBuf[1];
-		startNeedle =   ayabBuf[2];
-		stopNeedle =    ayabBuf[3];
+		machineType =   ayabRX[1];
+		startNeedle =   ayabRX[2];
+		stopNeedle =    ayabRX[3];
         txAYAB(cnfStart);
 		break;
 
 	case cnfLine:
         /* Send information about a new row from the PC. */
-		currentRow =     ayabBuf[1];
-        /* Don't want to use pointer because next packet will clobber ayabBuf. */
-		memcpy(bitPattern, &ayabBuf[2], 25); 
-		lastRow =       ayabBuf[27];
-		crc8_cs =       ayabBuf[28];
+		currentRow =     ayabRX[1];
+
+        /* Don't want to use pointer because next packet will clobber ayabRX. */
+		memcpy(bitPattern, &ayabRX[2], 25); 
+		lastRow =       ayabRX[27];
+		crc8_cs =       ayabRX[28];
 		break;
 
 	case reqInfo:
         /* First part of handshake, request firmware information */
 		txAYAB(cnfInfo);
 		break;
+
+    case reqInit:
+        txAYAB(cnfInit);
+        break;
 
 	default:
 		break;
@@ -85,7 +95,11 @@ void txAYAB(uint8_t cmd)
 {
     /* Should we check if the USB tx is busy? */
     uint8_t ayabPacket[64]; /* Don't use more than one USB packet. */
-    ayabPacket[0] = cmd;    /* First byte of the message is the ID */
+    uint8_t ayabIndex = 0;
+
+    /* The SLIP packet is double ended, so we start with an end signal (0xC0). */
+    ayabPacket[ayabIndex++] = slipFrameEnd;
+    ayabPacket[ayabIndex++] = cmd;    /* First real byte of the message is the ID */
 
 	switch (cmd)
 	{
@@ -94,61 +108,57 @@ void txAYAB(uint8_t cmd)
         as long as the needles are within real values (initialized to 0xFF)
         then we can just return that a valid config was received. */
         if(startNeedle <= 198 && stopNeedle <= 200){
-            ayabPacket[1] = 0x01;
+            ayabPacket[ayabIndex++] = 0x00;
             machineState = 1; /* HOMING */
         }
         else{
-            ayabPacket[1] = 0x00;
+            ayabPacket[ayabIndex++] = 0xFF;
         }
-
-        slipSend((uint8_t *)ayabPacket, 2);
 		break;
 
 	case reqLine:
 		/* Request a new line from the software */
-        ayabPacket[1] = currentRow + 1;
-        slipSend((uint8_t *)ayabPacket, 2);
+        ayabPacket[ayabIndex++] = currentRow + 1;
         break;
 
 	case cnfInfo:
         /* Respond to reqInfo with firmware version identifier, major version, minor version. */
-        ayabPacket[1] = versionAPI;
-        ayabPacket[2] = versionMajor;
-        ayabPacket[3] = versionMinor;
-        slipSend((uint8_t *)ayabPacket, 4);
+        ayabPacket[ayabIndex++] = versionAPI;
+        ayabPacket[ayabIndex++] = versionMajor;
+        ayabPacket[ayabIndex++] = versionMinor;
 		break;
+
+    case cnfInit:   
+        /* Should probably add something here to check if init went smooth.
+        default return 0 for success. There are error codes in the API. */
+        ayabPacket[ayabIndex++] = 0x00;
+        break;
 
 	case indState:
         /* Indicate if initialized or not. */
-        ayabPacket[1] = machineInitialized;
+        ayabPacket[ayabIndex++] = machineInitialized;
 
         /* EOL sensor states */
-        ayabPacket[2] = EOL_result[0] >> 8;
-        ayabPacket[3] = EOL_result[0] & 0xFF;
-        ayabPacket[4] = EOL_result[1] >> 8;
-        ayabPacket[5] = EOL_result[1] & 0xFF;
+        ayabPacket[ayabIndex++] = EOL_result[0] >> 8;
+        ayabPacket[ayabIndex++] = EOL_result[0] & 0xFF;
+        ayabPacket[ayabIndex++] = EOL_result[1] >> 8;
+        ayabPacket[ayabIndex++] = EOL_result[1] & 0xFF;
 
         /* Machine information */
-        ayabPacket[6] = carriageType;
-        ayabPacket[7] = machineType;
-        ayabPacket[8] = currentDir;
-
-        slipSend((uint8_t *)ayabPacket, 9);
+        ayabPacket[ayabIndex++] = carriageType;
+        ayabPacket[ayabIndex++] = machineType;
+        ayabPacket[ayabIndex++] = currentDir;
 		break;
 
 	case debug:
         /* Send the debug string to the software */
-        ayabPacket[1] = 0xFF;
+        ayabPacket[ayabIndex++] = 0xFF;
 		break;
 
 	default:
 		break;
 	}
-}
 
-void slipSend(uint8_t *packet, uint8_t len){
-    /* The pointer should be to first item... so we can just add bytes at the end */
-    packet[len] = '\r';
-    packet[len+1] = '\n';
-    CDC_Transmit_FS((uint8_t *)packet, (len+2));
+    ayabPacket[ayabIndex++] = slipFrameEnd;
+    CDC_Transmit_FS((uint8_t *)ayabPacket, ayabIndex);
 }
