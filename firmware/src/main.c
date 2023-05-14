@@ -21,6 +21,7 @@
 /* Defines */
 #define HW_TEST 0
 #define FW_AYAB 1
+#define AYAB_CRC 0
 #define SWAP_SOLENOID 1 /* If on rev1 boards with solenoid banks swapped. */
 
 #define KH930
@@ -93,10 +94,10 @@ uint8_t *patternPointer;
 uint8_t bitPattern[25];		/* The entire line to be knitted [25 bytes = 200 bits] 	*/
 uint8_t startNeedle = 0xFF; /* Start needle for the pattern (subset of all needles) */
 uint8_t stopNeedle = 0xFF;	/* End needle for the pattern (subset of all needles)	*/
-uint8_t passStart;
-uint8_t passStop;
-uint8_t currentRow = 0; /* The row currently being worked by the machine. 		*/
-uint8_t lastRow;		/* Flag if the line received from AYAB is the last line of the pattern */
+uint8_t passStart = 0;		/* Set after we pass the leftmost needle of pattern. */
+uint8_t passStop = 0;		/* Set after we pass the rightmost needle of pattern. */
+uint8_t currentRow = 0; 	/* The row currently being worked by the machine. 		*/
+uint8_t lastRow = 0;		/* Flag if the line received from AYAB is the last line of the pattern */
 
 /* General buffer*/
 
